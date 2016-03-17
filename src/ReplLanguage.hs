@@ -2,12 +2,11 @@ module ReplLanguage where
 
 import           Control.Monad.State
 
-import           Data.Maybe          (fromMaybe)
-
 import           WhileLanguage
+import           WhilePrograms
 
 -- a ReplExpr is either an assignment or a program
-data ReplExpr = Ass Definition | Prog ProgramExpr
+data ReplExpr = Asngmt Definition | Prog ProgramExpr
 
 -- a definition binds a program to a name
 data Definition = Def Id ProgramExpr
@@ -19,6 +18,8 @@ data ProgramExpr = AP VarName VarName Int -- x := y + n
                  | W Predicate ProgramExpr -- WHILE (pred(x)) P : while pred(x) is true repeat P
                  | IF Predicate ProgramExpr ProgramExpr -- IF (pred(x)) P ELSE Q
                  | I Id -- the name of a previously defined programm
+                 | Clear VarName -- clear a varibale, i.e., set its value to 0
+                                 --(this is almost the same as if the variable were undefined)
 
 data Predicate = P VarName Ordering Int
 
@@ -47,26 +48,51 @@ translate (AM x y n) =
     return $ xi =$ yi -$ n
 translate (Seq p q) =
   do
-    t1 <- translate p
-    t2 <- translate q
-    return $ t1 & t2
+    tp <- translate p
+    tq <- translate q
+    return $ tp & tq
 translate (L1 x p) =
   do
     xi <- resolveVar x
-    t <- translate p
-    return $ loop xi t
+    tp <- translate p
+    return $ loop xi tp
 translate (L2 n p) =
   do
-    xi <- resolveVar =<< freshVar
-    t <- translate p
-    return $ (xi =$ xi +$ n) & t
-translate (W n p) = undefined
-translate (IF pre p q) = undefined
-translate (I id) = undefined
+    fi <- resolveVar =<< freshVar
+    tp <- translate p
+    return $ (fi =$ fi +$ n) & loop fi tp
+translate (W (P x ord n) prog) =
+  do
+    f1 <- resolveVar =<< freshVar
+    f2 <- resolveVar =<< freshVar
+    xi <- resolveVar x
+    tp <- translate prog
+    return $ case ord of
+      GT -> whileGreaterThen xi n tp f1
+      LT -> whileLessThen xi n tp f1
+      EQ -> whileEqual xi n tp f1 f2
+translate (IF (P x ord n) p q) =
+  do
+    f1 <- resolveVar =<< freshVar
+    f2 <- resolveVar =<< freshVar
+    f3 <- resolveVar =<< freshVar
+    xi <- resolveVar x
+    tp <- translate p
+    tq <- translate q
+    return $ case ord of
+      GT -> ifGreaterThen xi n tp tq f1 f2
+      LT -> ifLessThen xi n tp tq f1 f2
+      EQ -> ifEqualThen xi n tp tq f1 f2 f3
+translate (I i) = resolveId i >>= translate
+translate (Clear x) =
+  do
+    xi <- resolveVar x
+    return $ clearVar xi
 
-type ReplM = State VarTable
-data VarTable = VT { next  :: Int
-                   , table :: [(VarName,Int)] }
+type ReplM = State DefTable
+data DefTable = DT { nextFreeVar :: Int
+                   , vars        :: [(VarName,Int)]
+                   , progs       :: [(Id,ProgramExpr)] }
 
 
 merge :: (Eq k, Eq v) => [(k,v)] -> [(k,v)] -> Maybe [(k,v)]
@@ -76,14 +102,15 @@ merge ((k,v):xs) ys = case lookup k ys of
                         Just v' -> if v == v' then merge xs ys else Nothing
                         Nothing -> merge xs ((k,v):ys)
 
-newVT :: VarTable
-newVT = VT 0 []
+newDT :: DefTable
+newDT = DT 0 [] []
 
 nameDefined :: VarName -> ReplM Bool
 nameDefined = undefined
 
-
-
+-- this does NOT lookup a value of a variable insted the result is the
+-- "address" of that variable, i.e., the entry in the VarTable witch is
+-- associated with the VarName
 resolveVar :: VarName -> ReplM Int
 resolveVar = undefined
 
@@ -96,3 +123,6 @@ freshVar = undefined
 names :: [VarName]
 names = letters ++ ((++) <$> names <*> letters )
   where letters = map (:[]) ['a'..'z']
+
+resolveId :: Id -> ReplM ProgramExpr
+resolveId = undefined

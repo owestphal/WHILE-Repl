@@ -6,17 +6,19 @@ module WhileLanguage (
   while,
   (=$),
   (+$),
-  (-$)
+  (-$),
+  emptyProgram
   ) where
 
 import           Data.Maybe (fromMaybe)
 
--- datatype for WHILE-expressions / WHILE-programms
+-- datatype for WHILE-expressions / WHILE-programs
 data WhileExpr = AP VarName VarName Int -- x := y + n
           | AM VarName VarName Int -- x := y - n
           | S WhileExpr WhileExpr -- P1;P2 : sequential composition
           | L VarName WhileExpr -- LOOP x P : repeat P value(x) times
           | W VarName WhileExpr -- WHILE x /= 0 P : while value(x) is not 0 repeat P
+          | EmptyProgram -- the empty program that does nothing
 
 -- all variable names are of the form x_i, so they are basically just Int
 type VarName = Int
@@ -24,11 +26,17 @@ type VarName = Int
 -- verbose constructors for expressions
 infixl 4 &
 (&) :: WhileExpr -> WhileExpr -> WhileExpr
-(&) = S
+p            & EmptyProgram = p
+EmptyProgram & q            = q
+p            & q            = S p q
 loop :: VarName -> WhileExpr -> WhileExpr
-loop = L
+loop _ EmptyProgram = EmptyProgram
+loop x p            = L x p
 while :: VarName -> WhileExpr -> WhileExpr
-while = W
+while _ EmptyProgram = EmptyProgram
+while x p            = W x p
+emptyProgram :: WhileExpr
+emptyProgram = EmptyProgram
 
 -- x =$ y +$ n :: WhileExpr
 -- x =$ y -$ n :: WhileExpr
@@ -53,8 +61,8 @@ insert x env = x : env
 delete :: VarName -> Env -> Env
 delete x = filter ((/= x).fst)
 
-empty :: Env
-empty = []
+emptyEnv :: Env
+emptyEnv = []
 
 assignValue :: VarName -> Int -> Env -> Env
 assignValue name n | n <= 0    = delete name
@@ -75,10 +83,10 @@ eval (L x e) env = foldr eval env $ replicate (lookupValue x env) e
 eval (W x e) env = if isZero x env
                      then env
                      else eval (W x e) (eval e env)
-
+eval EmptyProgram env = env
 
 -- tests/examples
 p1 = 0 =$ 0 +$ 4
 p2 = p1 & 1 =$ 0 +$ 3
-p3 = p1 & L 0 (0 =$ 0 +$ 1)
-p4 = p1 & W 0 (1 =$ 1 +$ 1 & 0 =$ 0 -$ 3)
+p3 = p1 & loop 0 (0 =$ 0 +$ 1)
+p4 = p1 & while 0 (1 =$ 1 +$ 1 & 0 =$ 0 -$ 3)

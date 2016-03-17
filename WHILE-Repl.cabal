@@ -18,6 +18,7 @@ cabal-version:       >=1.10
 executable WHILE-Repl
   main-is:             Main.hs
   other-modules:       WhileLanguage,
+                       WhilePrograms,
                        ReplLanguage
   -- other-extensions:
   build-depends:       base >=4.8 && <4.9, mtl
