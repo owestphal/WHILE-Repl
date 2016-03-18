@@ -1,5 +1,7 @@
 module ReplLanguage where
 
+import           Control.Monad.Except
+import           Control.Monad.Identity
 import           Control.Monad.State
 
 import           WhileLanguage
@@ -38,61 +40,59 @@ do p' <- translate p
 translate :: ProgramExpr -> ReplM WhileExpr
 translate (AP x y n) =
   do
-    xi <- resolveVar x
-    yi <- resolveVar y
+    [xi, yi] <- resolveVars [x, y]
     return $ xi =$ yi +$ n
 translate (AM x y n) =
   do
-    xi <- resolveVar x
-    yi <- resolveVar y
+    [xi, yi] <- resolveVars [x, y]
     return $ xi =$ yi -$ n
 translate (Seq p q) =
   do
-    tp <- translate p
-    tq <- translate q
-    return $ tp & tq
+    [p', q'] <- mapM translate [p, q]
+    return $ p' & q'
 translate (L1 x p) =
   do
     xi <- resolveVar x
-    tp <- translate p
-    return $ loop xi tp
+    p' <- translate p
+    return $ loop xi p'
 translate (L2 n p) =
   do
-    fi <- resolveVar =<< freshVar
-    tp <- translate p
-    return $ (fi =$ fi +$ n) & loop fi tp
-translate (W (P x ord n) prog) =
+    t <- tempVar
+    p' <- translate p
+    return $ (t =$ t +$ n) & loop t p'
+translate (W (P x ord n) p) =
   do
-    f1 <- resolveVar =<< freshVar
-    f2 <- resolveVar =<< freshVar
+    t1 <- tempVar
+    t2 <- tempVar
     xi <- resolveVar x
-    tp <- translate prog
+    p' <- translate p
     return $ case ord of
-      GT -> whileGreaterThen xi n tp f1
-      LT -> whileLessThen xi n tp f1
-      EQ -> whileEqual xi n tp f1 f2
+      GT -> whileGreaterThen xi n p' t1
+      LT -> whileLessThen xi n p' t1
+      EQ -> whileEqual xi n p' t1 t2
 translate (IF (P x ord n) p q) =
   do
-    f1 <- resolveVar =<< freshVar
-    f2 <- resolveVar =<< freshVar
-    f3 <- resolveVar =<< freshVar
+    t1 <- tempVar
+    t2 <- tempVar
+    t3 <- tempVar
     xi <- resolveVar x
-    tp <- translate p
-    tq <- translate q
+    p' <- translate p
+    q' <- translate q
     return $ case ord of
-      GT -> ifGreaterThen xi n tp tq f1 f2
-      LT -> ifLessThen xi n tp tq f1 f2
-      EQ -> ifEqualThen xi n tp tq f1 f2 f3
+      GT -> ifGreaterThen xi n p' q' t1 t2
+      LT -> ifLessThen xi n p' q' t1 t2
+      EQ -> ifEqualThen xi n p' q' t1 t2 t3
 translate (I i) = resolveId i >>= translate
 translate (Clear x) =
   do
     xi <- resolveVar x
     return $ clearVar xi
 
-type ReplM = State DefTable
-data DefTable = DT { nextFreeVar :: Int
-                   , vars        :: [(VarName,Int)]
-                   , progs       :: [(Id,ProgramExpr)] }
+type ReplM = ExceptT String (StateT DefTable Identity)
+data DefTable = DT { unusedVars      :: [Int]
+                   , unusedTempNames :: [Int]
+                   , usedVars        :: [(VarName,Int)]
+                   , programs        :: [(Id,ProgramExpr)] }
 
 
 merge :: (Eq k, Eq v) => [(k,v)] -> [(k,v)] -> Maybe [(k,v)]
@@ -103,26 +103,46 @@ merge ((k,v):xs) ys = case lookup k ys of
                         Nothing -> merge xs ((k,v):ys)
 
 newDT :: DefTable
-newDT = DT 0 [] []
+newDT = DT [0..] [0..] [] []
 
 nameDefined :: VarName -> ReplM Bool
-nameDefined = undefined
+nameDefined x = do
+  DT {usedVars = table} <- get
+  return $ case lookup x table of
+    Just _ -> True
+    Nothing -> False
 
--- this does NOT lookup a value of a variable insted the result is the
--- "address" of that variable, i.e., the entry in the VarTable witch is
--- associated with the VarName
+-- this does NOT lookup the value of a variable insted the result is the
+-- "address" of that variable, i.e., the entry in the DefTable witch is
+-- associated with the VarName.
+-- If a variable is not defined in the DefTable than a new entry is created
 resolveVar :: VarName -> ReplM Int
-resolveVar = undefined
+resolveVar x = do
+  (DT (next:free) ftemps table progs) <- get
+  case lookup x table of
+    Just i -> return i
+    Nothing -> do
+      put $ DT free
+               ftemps
+               ((x,next):table)
+               progs
+      return next
 
 resolveVars :: [VarName] -> ReplM [Int]
-resolveVars = undefined
+resolveVars = mapM resolveVar
 
-freshVar :: ReplM VarName
-freshVar = undefined
-
-names :: [VarName]
-names = letters ++ ((++) <$> names <*> letters )
-  where letters = map (:[]) ['a'..'z']
+tempVar :: ReplM Int
+tempVar = do
+  (DT (next:fVars) (i:fTemps) table progs) <- get
+  put $ DT fVars
+           fTemps
+           (('_' : show i, next) : table)
+           progs
+  return next
 
 resolveId :: Id -> ReplM ProgramExpr
-resolveId = undefined
+resolveId x = do
+  DT {programs = table} <- get
+  case lookup x table of
+    Just p -> return p
+    Nothing -> throwError $ "program identifier " ++ x ++ " not defined!"
